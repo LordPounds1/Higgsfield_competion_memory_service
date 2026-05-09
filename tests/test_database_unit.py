@@ -82,3 +82,20 @@ def test_anonymous_sessions_do_not_supersede_each_other(tmp_path: Path) -> None:
         assert [memory["value"] for memory in anon_2] == ["Lives in Lisbon"]
     finally:
         database.close()
+
+
+def test_same_session_id_does_not_bleed_between_users(tmp_path: Path) -> None:
+    database = MemoryDatabase(tmp_path / "memory.db")
+    try:
+        turn_1 = database.create_turn(make_turn("shared-session", "user-a", "I live in Berlin."))
+        database.add_memories([make_memory("location.current", "Lives in Berlin", "shared-session", turn_1, "user-a")])
+        turn_2 = database.create_turn(make_turn("shared-session", "user-b", "I live in Seattle."))
+        database.add_memories([make_memory("location.current", "Lives in Seattle", "shared-session", turn_2, "user-b")])
+
+        user_a = database.active_memories("user-a", "shared-session")
+        user_b = database.active_memories("user-b", "shared-session")
+
+        assert [memory["value"] for memory in user_a] == ["Lives in Berlin"]
+        assert [memory["value"] for memory in user_b] == ["Lives in Seattle"]
+    finally:
+        database.close()

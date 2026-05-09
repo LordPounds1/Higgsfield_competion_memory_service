@@ -69,7 +69,7 @@ class RecallEngine:
         self, query: str, session_id: str, user_id: str | None, include_recent: bool
     ) -> list[ScoredItem]:
         items: dict[str, ScoredItem] = {}
-        for message in self.database.search_messages(query, None, session_id, limit=10):
+        for message in self.database.search_messages(query, user_id, session_id, limit=10):
             if message["role"] == "assistant":
                 continue
             items[message["id"]] = ScoredItem("message", message, float(message.get("score", 1.0)))

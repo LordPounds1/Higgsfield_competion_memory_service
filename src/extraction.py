@@ -45,7 +45,7 @@ def extract_memories(request: TurnRequest, turn_id: str) -> list[dict[str, Any]]
         lower = sentence.lower()
 
         moved = re.search(
-            r"\b(?:i\s+)?(?:just\s+|recently\s+)?moved to (?P<to>.+?)(?: from (?P<from>.+?))?(?: last month| last year| recently| this month|$)",
+            r"\b(?:i\s+)?(?:just\s+|recently\s+)?(?:moved|relocated) to (?P<to>.+?)(?: from (?P<from>.+?))?(?: last month| last year| recently| this month|$)",
             sentence,
             re.IGNORECASE,
         )
@@ -58,7 +58,7 @@ def extract_memories(request: TurnRequest, turn_id: str) -> list[dict[str, Any]]
                 emit("fact", "location.current", f"Lives in {destination}", 0.86, sentence)
 
         location = re.search(
-            r"\b(?:i live in|i'm based in|i am based in|currently based in)\s+(?P<place>.+)$",
+            r"\b(?:i\s+(?:now\s+)?live in|i'm\s+(?:now\s+)?living in|i am\s+(?:now\s+)?living in|i'm based in|i am based in|currently based in)\s+(?P<place>.+)$",
             sentence,
             re.IGNORECASE,
         )
@@ -73,11 +73,16 @@ def extract_memories(request: TurnRequest, turn_id: str) -> list[dict[str, Any]]
             re.IGNORECASE,
         )
         joined = re.search(
-            r"\b(?:i\s+)?(?:just\s+|recently\s+)?(?:joined|started at|started with)\s+(?P<company>.+?)(?:\s+as\s+(?:a|an)?\s*(?P<role>.+))?$",
+            r"\b(?:i\s+)?(?:just\s+|recently\s+)?(?:joined|started at|started with|started a new role at|now work at|am now at|i'm now at)\s+(?P<company>.+?)(?:\s+as\s+(?:a|an)?\s*(?P<role>.+))?$",
             sentence,
             re.IGNORECASE,
         )
-        job_match = joined or employment
+        transition = re.search(
+            r"\b(?:i\s+)?(?:left|am no longer at|no longer work at|stopped working at)\s+.+?\s+(?:and\s+)?(?:joined|started at|now work at|am now at|i'm now at)\s+(?P<company>.+?)(?:\s+as\s+(?:a|an)?\s*(?P<role>.+))?$",
+            sentence,
+            re.IGNORECASE,
+        )
+        job_match = transition or joined or employment
         if job_match:
             company = clean_entity(job_match.group("company"))
             role = clean_value(job_match.group("role") or "")
@@ -86,7 +91,7 @@ def extract_memories(request: TurnRequest, turn_id: str) -> list[dict[str, Any]]
                 emit("fact", "employment.current", value, 0.9, sentence)
 
         pet = re.search(
-            r"\b(?:i have|we have|my)\s+(?:a|an)?\s*(?P<animal>dog|cat|pet)\s+(?:named|called)?\s*(?P<name>[A-Z][A-Za-z0-9_-]{1,40})\b",
+            r"\b(?:i have|we have|my)\s+(?:a|an)?\s*(?P<animal>dog|cat|pet)\s+(?:is\s+)?(?:named|called)?\s*(?P<name>[A-Z][A-Za-z0-9_-]{1,40})\b",
             sentence,
             re.IGNORECASE,
         )
@@ -110,6 +115,11 @@ def extract_memories(request: TurnRequest, turn_id: str) -> list[dict[str, Any]]
             item = clean_entity(allergy.group("item"))
             if item:
                 emit("fact", f"allergy.{slug(item)}", f"Allergic to {item}", 0.9, sentence)
+        allergy_noun = re.search(r"\b(?:i have|with)\s+(?:a\s+)?(?P<item>[A-Za-z][A-Za-z -]{1,60})\s+allergy\b", sentence, re.IGNORECASE)
+        if allergy_noun:
+            item = clean_entity(allergy_noun.group("item"))
+            if item:
+                emit("fact", f"allergy.{slug(item)}", f"Allergic to {item}", 0.82, sentence)
 
         prefer = re.search(r"\b(?:i prefer|please keep|keep)\s+(?P<pref>[^.;]+)", sentence, re.IGNORECASE)
         if prefer:
@@ -117,6 +127,10 @@ def extract_memories(request: TurnRequest, turn_id: str) -> list[dict[str, Any]]
             if pref:
                 key = "preference.answer_style" if "answer" in lower or "concise" in lower else f"preference.{slug(pref)[:40]}"
                 emit("preference", key, f"Prefers {pref}", 0.78, sentence)
+        likes_answer_style = re.search(r"\bi like\s+(?P<pref>concise|direct|short|brief)(?:\s+answers?)?\b", sentence, re.IGNORECASE)
+        if likes_answer_style:
+            pref = clean_value(likes_answer_style.group("pref"))
+            emit("preference", "preference.answer_style", f"Prefers {pref} answers", 0.72, sentence)
 
         if "typescript" in lower and any(marker in lower for marker in ["i love", "i hate", "fine for", "annoying"]):
             emit("opinion", "opinion.typescript", clean_value(sentence), 0.74, sentence)

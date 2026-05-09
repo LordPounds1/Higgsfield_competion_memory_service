@@ -291,12 +291,12 @@ class MemoryDatabase:
         return any(normalized_value(row["value"]) == wanted for row in rows)
 
     def recent_messages(self, user_id: str | None, session_id: str, limit: int = 10) -> list[dict[str, Any]]:
-        clauses = ["session_id = ?"]
-        params: list[Any] = [session_id]
         if user_id:
-            clauses.append("(user_id = ? OR user_id IS NULL)")
-            params.append(user_id)
-        where = " AND ".join(clauses)
+            where = "session_id = ? AND user_id = ?"
+            params: list[Any] = [session_id, user_id]
+        else:
+            where = "session_id = ? AND user_id IS NULL"
+            params = [session_id]
         with self.lock:
             rows = self.conn.execute(
                 f"SELECT * FROM messages WHERE {where} ORDER BY timestamp DESC, ordinal DESC LIMIT ?",
@@ -315,15 +315,15 @@ class MemoryDatabase:
             WHERE messages_fts MATCH ?
         """
         params: list[Any] = [match_query]
-        scopes = []
-        if user_id:
-            scopes.append("msg.user_id = ?")
+        if user_id and session_id:
+            sql += " AND msg.user_id = ? AND msg.session_id = ?"
+            params.extend([user_id, session_id])
+        elif user_id:
+            sql += " AND msg.user_id = ?"
             params.append(user_id)
-        if session_id:
-            scopes.append("msg.session_id = ?")
+        elif session_id:
+            sql += " AND msg.session_id = ?"
             params.append(session_id)
-        if scopes:
-            sql += " AND (" + " OR ".join(scopes) + ")"
         sql += " ORDER BY rank LIMIT ?"
         params.append(limit)
         with self.lock:
@@ -334,17 +334,17 @@ class MemoryDatabase:
         ]
 
     def active_memories(self, user_id: str | None, session_id: str, limit: int = 100) -> list[dict[str, Any]]:
-        clauses = ["source_session = ?"]
-        params: list[Any] = [session_id]
         if user_id:
-            clauses.append("user_id = ?")
-            params.append(user_id)
-        where = " OR ".join(clauses)
+            where = "user_id = ?"
+            params: list[Any] = [user_id]
+        else:
+            where = "user_id IS NULL AND source_session = ?"
+            params = [session_id]
         with self.lock:
             rows = self.conn.execute(
                 f"""
                 SELECT * FROM memories
-                WHERE active = 1 AND ({where})
+                WHERE active = 1 AND {where}
                 ORDER BY updated_at DESC
                 LIMIT ?
                 """,
@@ -363,15 +363,12 @@ class MemoryDatabase:
             WHERE memories_fts MATCH ? AND m.active = 1
         """
         params: list[Any] = [match_query]
-        scopes = []
         if user_id:
-            scopes.append("m.user_id = ?")
+            sql += " AND m.user_id = ?"
             params.append(user_id)
-        if session_id:
-            scopes.append("m.source_session = ?")
+        elif session_id:
+            sql += " AND m.source_session = ?"
             params.append(session_id)
-        if scopes:
-            sql += " AND (" + " OR ".join(scopes) + ")"
         sql += " ORDER BY rank LIMIT ?"
         params.append(limit)
         with self.lock:

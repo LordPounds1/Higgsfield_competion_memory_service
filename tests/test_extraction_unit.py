@@ -71,3 +71,31 @@ def test_extracts_location_correction_phrase() -> None:
     location = by_key(memories, "location.current")
     assert len(location) == 1
     assert location[0]["value"] == "Lives in Berlin"
+
+
+def test_extracts_common_location_paraphrases() -> None:
+    relocated = extract_memories(make_turn("I recently relocated to Lisbon from Madrid."), "turn-6")
+    living = extract_memories(make_turn("I'm now living in Tokyo."), "turn-7")
+
+    assert by_key(relocated, "location.current")[0]["value"] == "Lives in Lisbon; moved from Madrid"
+    assert by_key(living, "location.current")[0]["value"] == "Lives in Tokyo"
+
+
+def test_extracts_common_employment_transition_phrases() -> None:
+    left_joined = extract_memories(make_turn("I left Stripe and joined Notion as a product engineer."), "turn-8")
+    new_role = extract_memories(make_turn("I started a new role at Figma as a designer."), "turn-9")
+
+    assert by_key(left_joined, "employment.current")[0]["value"] == "Works at Notion as product engineer"
+    assert by_key(new_role, "employment.current")[0]["value"] == "Works at Figma as designer"
+
+
+def test_extracts_pet_allergy_and_preference_paraphrases() -> None:
+    memories = extract_memories(
+        make_turn("My dog is named Biscuit. I have a shellfish allergy. I like concise answers."),
+        "turn-10",
+    )
+    values_by_key = {memory["key"]: memory["value"] for memory in memories}
+
+    assert values_by_key["pet.biscuit"] == "Has a dog named Biscuit"
+    assert values_by_key["allergy.shellfish"] == "Allergic to shellfish"
+    assert values_by_key["preference.answer_style"] == "Prefers concise answers"

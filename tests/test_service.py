@@ -77,6 +77,21 @@ def test_concurrent_sessions_do_not_bleed_between_users() -> None:
     assert "Berlin" not in b_recall["context"]
 
 
+def test_same_session_id_does_not_bleed_between_users() -> None:
+    cleanup_user("test-shared-a")
+    cleanup_user("test-shared-b")
+    post_turn("test-shared-a", "test-shared-session", "I live in Berlin.", "2025-03-15T10:00:00Z")
+    post_turn("test-shared-b", "test-shared-session", "I live in Seattle.", "2025-03-15T10:01:00Z")
+
+    a_recall = recall_query("Where does this user live?", "test-shared-session", "test-shared-a").json()
+    b_recall = recall_query("Where does this user live?", "test-shared-session", "test-shared-b").json()
+
+    assert "Berlin" in a_recall["context"]
+    assert "Seattle" not in a_recall["context"]
+    assert "Seattle" in b_recall["context"]
+    assert "Berlin" not in b_recall["context"]
+
+
 def test_malformed_and_unicode_inputs_are_safe() -> None:
     malformed = requests.post(f"{BASE_URL}/turns", data="{bad json", headers={"Content-Type": "application/json"}, timeout=10)
     assert 400 <= malformed.status_code < 500
