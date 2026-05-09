@@ -173,9 +173,13 @@ def tokens(text: str) -> list[str]:
 def intent_keys(query: str) -> list[str]:
     lower = query.lower()
     intents: list[str] = []
-    if any(word in lower for word in ["where", "city", "live", "lives", "based", "moved"]):
+    asks_employment = any(word in lower for word in ["work", "job", "company", "employer", "joined"])
+    asks_location = any(word in lower for word in ["city", "live", "lives", "based", "moved", "location"])
+    if "where" in lower and not asks_employment:
+        asks_location = True
+    if asks_location:
         intents.append("location.current")
-    if any(word in lower for word in ["work", "job", "company", "employer", "joined"]):
+    if asks_employment:
         intents.append("employment.current")
     if any(word in lower for word in ["dog", "cat", "pet", "biscuit"]):
         intents.append("pet.")

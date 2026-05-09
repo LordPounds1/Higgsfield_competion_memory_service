@@ -89,7 +89,7 @@ def test_malformed_and_unicode_inputs_are_safe() -> None:
     response = post_turn(
         user_id=user_id,
         session_id="test-unicode-1",
-        text="I live in München and prefer concise answers.",
+        text="I live in M\u00fcnchen and prefer concise answers.",
         timestamp="2025-03-20T10:00:00Z",
     )
     assert response.status_code == 201
