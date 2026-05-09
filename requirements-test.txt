@@ -1,0 +1,11 @@
+pytest==8.4.2
+requests==2.32.5
+certifi==2026.4.22
+charset-normalizer==3.4.4
+colorama==0.4.6
+idna==3.13
+iniconfig==2.3.0
+packaging==25.0
+pluggy==1.6.0
+pygments==2.19.2
+urllib3==2.6.2
