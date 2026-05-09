@@ -6,7 +6,7 @@ This repository is being built iteratively. The first milestone focuses on the H
 
 ## Current Milestone
 
-`v1 - Contract skeleton`
+`v2 - Structured extraction`
 
 - FastAPI application on port `8080`.
 - Required endpoints are present.
@@ -14,8 +14,10 @@ This repository is being built iteratively. The first milestone focuses on the H
 - Docker Compose uses the named volume `memory_data:/data`.
 - Tables exist for `turns`, `messages`, and `memories`.
 - FTS5 tables exist for message and future memory search.
+- `POST /turns` now extracts structured memories from user messages.
+- `/users/{user_id}/memories` shows typed facts and preferences with keys, confidence, active status, and provenance.
 
-Extraction, fact evolution, hybrid recall, fixtures, and final documentation are intentionally added in later milestones.
+Fact evolution, hybrid recall, fixtures, and final documentation are intentionally added in later milestones.
 
 ## Run
 
@@ -29,6 +31,6 @@ curl http://localhost:8080/health
 The design follows a SQLite-first memory system:
 
 1. Store completed turns and messages.
-2. Extract structured memories instead of raw chunks.
+2. Extract structured memories instead of raw chunks. (current milestone)
 3. Supersede mutable facts without deleting history.
 4. Rank active facts, query-relevant memories, and recent session context under a token budget.

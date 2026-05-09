@@ -37,6 +37,10 @@ def json_load(value: str | None) -> dict[str, Any]:
     return loaded if isinstance(loaded, dict) else {}
 
 
+def normalized_value(value: str) -> str:
+    return " ".join(value.lower().split())
+
+
 class MemoryDatabase:
     def __init__(self, database_path: Path) -> None:
         self.database_path = database_path
@@ -166,6 +170,75 @@ class MemoryDatabase:
                 self.conn.rollback()
                 raise
         return turn_id
+
+    def add_memories(self, memories: list[dict[str, Any]]) -> list[str]:
+        inserted_ids: list[str] = []
+        with self.lock:
+            self.conn.execute("BEGIN IMMEDIATE")
+            try:
+                for memory in memories:
+                    key = str(memory.get("key", "")).strip().lower()
+                    value = str(memory.get("value", "")).strip()
+                    if not key or not value:
+                        continue
+                    if self.active_duplicate_exists(memory.get("user_id"), memory["source_session"], key, value):
+                        continue
+                    memory_id = str(uuid.uuid4())
+                    now = utc_now()
+                    self.conn.execute(
+                        """
+                        INSERT INTO memories
+                            (id, type, key, value, confidence, user_id, source_session, source_turn,
+                             created_at, updated_at, supersedes, active)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1)
+                        """,
+                        (
+                            memory_id,
+                            memory.get("type", "fact"),
+                            key,
+                            value,
+                            float(memory.get("confidence", 0.75)),
+                            memory.get("user_id"),
+                            memory["source_session"],
+                            memory["source_turn"],
+                            now,
+                            now,
+                        ),
+                    )
+                    self.conn.execute(
+                        """
+                        INSERT INTO memories_fts (memory_id, user_id, session_id, key, value, content)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            memory_id,
+                            memory.get("user_id"),
+                            memory["source_session"],
+                            key,
+                            value,
+                            f"{memory.get('type', 'fact')} {key} {value}",
+                        ),
+                    )
+                    inserted_ids.append(memory_id)
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
+        return inserted_ids
+
+    def active_duplicate_exists(self, user_id: str | None, session_id: str, key: str, value: str) -> bool:
+        if user_id:
+            rows = self.conn.execute(
+                "SELECT value FROM memories WHERE active = 1 AND user_id = ? AND key = ?",
+                (user_id, key),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT value FROM memories WHERE active = 1 AND user_id IS NULL AND source_session = ? AND key = ?",
+                (session_id, key),
+            ).fetchall()
+        wanted = normalized_value(value)
+        return any(normalized_value(row["value"]) == wanted for row in rows)
 
     def recent_messages(self, user_id: str | None, session_id: str, limit: int = 10) -> list[dict[str, Any]]:
         clauses = ["session_id = ?"]

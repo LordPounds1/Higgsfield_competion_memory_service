@@ -6,6 +6,7 @@ from fastapi import FastAPI, Response, status
 
 from src.config import Settings
 from src.database import MemoryDatabase
+from src.extraction import extract_memories
 from src.models import (
     RecallRequest,
     RecallResponse,
@@ -41,6 +42,9 @@ def health() -> dict[str, str]:
 def create_turn(request: TurnRequest) -> TurnResponse:
     database: MemoryDatabase = app.state.database
     turn_id = database.create_turn(request)
+    memories = extract_memories(request, turn_id)
+    if memories:
+        database.add_memories(memories)
     return TurnResponse(id=turn_id)
 
 
