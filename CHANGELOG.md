@@ -39,3 +39,13 @@
 **Observation:** After supersession, active/inactive status became a useful ranking signal. Query wording also gives strong hints: "where" maps to `location.current`, "work" maps to `employment.current`, and "dog named Biscuit" maps to `pet.*`.
 
 **Result:** Recall now produces prompt-ready sections under `max_tokens`: known facts first, relevant memories second, recent conversation context last. `/search` also returns structured memory results instead of only message snippets.
+
+## v5 - Recall fixture and service tests
+
+**What changed:** Added a small recall-quality fixture, a reusable `scripts/self_eval.py` runner, and service-level tests for contract shape, structured memory inspection, supersession, user isolation, malformed input, and optional restart persistence.
+
+**Why:** The project needs an evaluation loop, not only manual smoke checks. The fixture gives a cheap way to catch regressions in the core behaviors the private eval is likely to probe.
+
+**Observation:** The first useful metric is simple: expected fact hit rate plus an empty-context check for noise. It is not a full judge, but it quickly catches stale facts leaking into recall and irrelevant active memories being over-returned.
+
+**Result:** The test suite can run against a live service with `BASE_URL=http://localhost:8080 pytest tests/ -v`, and the benchmark can be run directly with `python scripts/self_eval.py --base-url http://localhost:8080 --fail-under 0.75`. Current fixture score is 1.00: 7/7 expected facts found and 1/1 noise probe returned empty context.

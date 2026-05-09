@@ -1,0 +1,175 @@
+{
+  "scenarios": [
+    {
+      "name": "move_nyc_to_berlin",
+      "user_id": "fixture-move-user",
+      "turns": [
+        {
+          "session_id": "fixture-move-1",
+          "timestamp": "2025-03-15T10:30:00Z",
+          "messages": [
+            {
+              "role": "user",
+              "content": "I just moved to Berlin from NYC last month. Loving it so far."
+            },
+            {
+              "role": "assistant",
+              "content": "That sounds exciting."
+            }
+          ]
+        }
+      ],
+      "probes": [
+        {
+          "query": "Where does this user live?",
+          "session_id": "fixture-move-probe",
+          "expected": ["Berlin"]
+        },
+        {
+          "query": "What is this user's favorite basketball team?",
+          "session_id": "fixture-move-probe",
+          "expected": "empty"
+        }
+      ]
+    },
+    {
+      "name": "employment_supersession",
+      "user_id": "fixture-job-user",
+      "turns": [
+        {
+          "session_id": "fixture-job-1",
+          "timestamp": "2025-03-10T09:00:00Z",
+          "messages": [
+            {
+              "role": "user",
+              "content": "I work at Stripe as a backend engineer."
+            }
+          ]
+        },
+        {
+          "session_id": "fixture-job-2",
+          "timestamp": "2025-03-18T09:00:00Z",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Quick update: I joined Notion as a product engineer."
+            }
+          ]
+        }
+      ],
+      "probes": [
+        {
+          "query": "Where does the user work now?",
+          "session_id": "fixture-job-probe",
+          "expected": ["Notion"],
+          "not_expected": ["Stripe"]
+        }
+      ]
+    },
+    {
+      "name": "pet_location_multihop",
+      "user_id": "fixture-pet-user",
+      "turns": [
+        {
+          "session_id": "fixture-pet-1",
+          "timestamp": "2025-03-11T11:00:00Z",
+          "messages": [
+            {
+              "role": "user",
+              "content": "I have a dog named Biscuit."
+            }
+          ]
+        },
+        {
+          "session_id": "fixture-pet-2",
+          "timestamp": "2025-03-12T12:00:00Z",
+          "messages": [
+            {
+              "role": "user",
+              "content": "I live in Seattle."
+            }
+          ]
+        }
+      ],
+      "probes": [
+        {
+          "query": "What city does the user with the dog named Biscuit live in?",
+          "session_id": "fixture-pet-probe",
+          "expected": ["Biscuit", "Seattle"]
+        }
+      ]
+    },
+    {
+      "name": "diet_allergy_preference",
+      "user_id": "fixture-food-user",
+      "turns": [
+        {
+          "session_id": "fixture-food-1",
+          "timestamp": "2025-03-13T13:00:00Z",
+          "messages": [
+            {
+              "role": "user",
+              "content": "I am vegetarian and allergic to shellfish. Please keep answers concise and direct."
+            }
+          ]
+        }
+      ],
+      "probes": [
+        {
+          "query": "What should I avoid cooking for this user?",
+          "session_id": "fixture-food-probe",
+          "expected": ["shellfish"]
+        },
+        {
+          "query": "How does this user prefer answers?",
+          "session_id": "fixture-food-probe",
+          "expected": ["concise"]
+        }
+      ]
+    },
+    {
+      "name": "opinion_evolution",
+      "user_id": "fixture-opinion-user",
+      "turns": [
+        {
+          "session_id": "fixture-opinion-1",
+          "timestamp": "2025-03-14T09:00:00Z",
+          "messages": [
+            {
+              "role": "user",
+              "content": "I love TypeScript."
+            }
+          ]
+        },
+        {
+          "session_id": "fixture-opinion-2",
+          "timestamp": "2025-03-15T09:00:00Z",
+          "messages": [
+            {
+              "role": "user",
+              "content": "TypeScript generics are getting annoying."
+            }
+          ]
+        },
+        {
+          "session_id": "fixture-opinion-3",
+          "timestamp": "2025-03-16T09:00:00Z",
+          "messages": [
+            {
+              "role": "user",
+              "content": "TypeScript is fine for big projects but I would use Python for scripts."
+            }
+          ]
+        }
+      ],
+      "probes": [
+        {
+          "query": "What is the user's current opinion on TypeScript?",
+          "session_id": "fixture-opinion-probe",
+          "expected": ["big projects"],
+          "not_expected": ["I love TypeScript"]
+        }
+      ]
+    }
+  ]
+}
