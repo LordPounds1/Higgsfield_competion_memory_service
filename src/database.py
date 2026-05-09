@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 import uuid
@@ -9,6 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from src.models import TurnRequest
+
+TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 
 
 def utc_now() -> str:
@@ -43,6 +46,17 @@ def normalized_value(value: str) -> str:
 
 def is_mutable_key(key: str) -> bool:
     return key.endswith(".current") or key.startswith("opinion.")
+
+
+def query_tokens(query: str) -> list[str]:
+    return [match.group(0).lower() for match in TOKEN_RE.finditer(query)]
+
+
+def fts_query(query: str) -> str | None:
+    tokens = list(dict.fromkeys(query_tokens(query)))[:12]
+    if not tokens:
+        return None
+    return " OR ".join(f'"{token}"' for token in tokens)
 
 
 class MemoryDatabase:
@@ -280,9 +294,9 @@ class MemoryDatabase:
         clauses = ["session_id = ?"]
         params: list[Any] = [session_id]
         if user_id:
-            clauses.append("user_id = ?")
+            clauses.append("(user_id = ? OR user_id IS NULL)")
             params.append(user_id)
-        where = " OR ".join(clauses)
+        where = " AND ".join(clauses)
         with self.lock:
             rows = self.conn.execute(
                 f"SELECT * FROM messages WHERE {where} ORDER BY timestamp DESC, ordinal DESC LIMIT ?",
@@ -291,17 +305,16 @@ class MemoryDatabase:
         return [dict(row) | {"metadata": json_load(row["metadata_json"])} for row in rows]
 
     def search_messages(self, query: str, user_id: str | None, session_id: str | None, limit: int = 10) -> list[dict[str, Any]]:
-        tokens = [token for token in query.replace('"', " ").split() if token]
-        if not tokens:
+        match_query = fts_query(query)
+        if not match_query:
             return []
-        fts_query = " OR ".join(f'"{token}"' for token in tokens[:12])
         sql = """
             SELECT msg.*, bm25(messages_fts) AS rank
             FROM messages_fts
             JOIN messages msg ON msg.id = messages_fts.message_id
             WHERE messages_fts MATCH ?
         """
-        params: list[Any] = [fts_query]
+        params: list[Any] = [match_query]
         scopes = []
         if user_id:
             scopes.append("msg.user_id = ?")
@@ -315,7 +328,60 @@ class MemoryDatabase:
         params.append(limit)
         with self.lock:
             rows = self.conn.execute(sql, params).fetchall()
-        return [dict(row) | {"score": 1.0, "metadata": json_load(row["metadata_json"])} for row in rows]
+        return [
+            dict(row) | {"score": 1.0 + max(0.0, -float(row["rank"])), "metadata": json_load(row["metadata_json"])}
+            for row in rows
+        ]
+
+    def active_memories(self, user_id: str | None, session_id: str, limit: int = 100) -> list[dict[str, Any]]:
+        clauses = ["source_session = ?"]
+        params: list[Any] = [session_id]
+        if user_id:
+            clauses.append("user_id = ?")
+            params.append(user_id)
+        where = " OR ".join(clauses)
+        with self.lock:
+            rows = self.conn.execute(
+                f"""
+                SELECT * FROM memories
+                WHERE active = 1 AND ({where})
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                [*params, limit],
+            ).fetchall()
+        return [self.memory_view(row) for row in rows]
+
+    def search_memories(self, query: str, user_id: str | None, session_id: str | None, limit: int = 25) -> list[dict[str, Any]]:
+        match_query = fts_query(query)
+        if not match_query:
+            return []
+        sql = """
+            SELECT m.*, bm25(memories_fts) AS rank
+            FROM memories_fts
+            JOIN memories m ON m.id = memories_fts.memory_id
+            WHERE memories_fts MATCH ? AND m.active = 1
+        """
+        params: list[Any] = [match_query]
+        scopes = []
+        if user_id:
+            scopes.append("m.user_id = ?")
+            params.append(user_id)
+        if session_id:
+            scopes.append("m.source_session = ?")
+            params.append(session_id)
+        if scopes:
+            sql += " AND (" + " OR ".join(scopes) + ")"
+        sql += " ORDER BY rank LIMIT ?"
+        params.append(limit)
+        with self.lock:
+            rows = self.conn.execute(sql, params).fetchall()
+        results = []
+        for row in rows:
+            memory = self.memory_view(row)
+            memory["score"] = 1.0 + max(0.0, -float(row["rank"]))
+            results.append(memory)
+        return results
 
     def get_user_memories(self, user_id: str) -> list[dict[str, Any]]:
         with self.lock:

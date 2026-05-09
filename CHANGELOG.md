@@ -29,3 +29,13 @@
 **Observation:** The extractor already normalizes mutable topics into stable keys, so the update logic can stay simple: compare by key inside the same user scope, deactivate old active rows, and insert the new row.
 
 **Result:** Old facts are preserved for inspection through `/users/{user_id}/memories`, but only the latest mutable fact remains active. This sets up the next iteration, where recall ranking can safely prioritize active memories.
+
+## v4 - Hybrid recall ranking
+
+**What changed:** Replaced the recent-message fallback with a recall engine that ranks active structured memories, FTS matches, and recent user context. Added query-intent boosts for location, employment, pets, allergies, preferences, and opinions.
+
+**Why:** `/recall` is the main endpoint in the eval. Returning recent messages is not enough once structured memories exist; current facts should be first, then query-relevant memories, then recent context.
+
+**Observation:** After supersession, active/inactive status became a useful ranking signal. Query wording also gives strong hints: "where" maps to `location.current`, "work" maps to `employment.current`, and "dog named Biscuit" maps to `pet.*`.
+
+**Result:** Recall now produces prompt-ready sections under `max_tokens`: known facts first, relevant memories second, recent conversation context last. `/search` also returns structured memory results instead of only message snippets.

@@ -16,6 +16,7 @@ from src.models import (
     TurnResponse,
     UserMemoriesResponse,
 )
+from src.recall import RecallEngine
 
 
 @asynccontextmanager
@@ -24,6 +25,7 @@ async def lifespan(app: FastAPI):
     database = MemoryDatabase(settings.database_path)
     app.state.settings = settings
     app.state.database = database
+    app.state.recall = RecallEngine(database)
     try:
         yield
     finally:
@@ -50,39 +52,14 @@ def create_turn(request: TurnRequest) -> TurnResponse:
 
 @app.post("/recall", response_model=RecallResponse)
 def recall(request: RecallRequest) -> RecallResponse:
-    database: MemoryDatabase = app.state.database
-    messages = database.search_messages(request.query, request.user_id, request.session_id, limit=5)
-    if not messages:
-        messages = database.recent_messages(request.user_id, request.session_id, limit=3)
-    citations = []
-    lines = []
-    for message in messages:
-        if message["role"] == "assistant":
-            continue
-        snippet = " ".join(message["content"].split())[:220]
-        lines.append(f"- [{message['timestamp'][:10]}] {message['role']}: {snippet}")
-        citations.append({"turn_id": message["turn_id"], "score": float(message.get("score", 0.1)), "snippet": snippet})
-    if not lines:
-        return RecallResponse(context="", citations=[])
-    return RecallResponse(context="## Recent conversation context\n" + "\n".join(lines), citations=citations)
+    engine: RecallEngine = app.state.recall
+    return RecallResponse(**engine.recall(request.query, request.session_id, request.user_id, request.max_tokens))
 
 
 @app.post("/search", response_model=SearchResponse)
 def search(request: SearchRequest) -> SearchResponse:
-    database: MemoryDatabase = app.state.database
-    messages = database.search_messages(request.query, request.user_id, request.session_id, request.limit)
-    return SearchResponse(
-        results=[
-            {
-                "content": item["content"],
-                "score": float(item.get("score", 0.0)),
-                "session_id": item["session_id"],
-                "timestamp": item["timestamp"],
-                "metadata": {"role": item["role"], "turn_id": item["turn_id"]},
-            }
-            for item in messages
-        ]
-    )
+    engine: RecallEngine = app.state.recall
+    return SearchResponse(**engine.search(request.query, request.session_id, request.user_id, request.limit))
 
 
 @app.get("/users/{user_id}/memories", response_model=UserMemoriesResponse)
