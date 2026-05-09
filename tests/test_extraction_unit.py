@@ -63,3 +63,11 @@ def test_extracts_current_typescript_opinion() -> None:
     opinion = by_key(memories, "opinion.typescript")
     assert len(opinion) == 1
     assert "big projects" in opinion[0]["value"]
+
+
+def test_extracts_location_correction_phrase() -> None:
+    memories = extract_memories(make_turn("Actually, I live in Berlin now, not NYC."), "turn-5")
+
+    location = by_key(memories, "location.current")
+    assert len(location) == 1
+    assert location[0]["value"] == "Lives in Berlin"

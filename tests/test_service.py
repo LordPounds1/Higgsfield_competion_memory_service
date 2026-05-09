@@ -95,6 +95,54 @@ def test_malformed_and_unicode_inputs_are_safe() -> None:
     assert response.status_code == 201
 
 
+def test_recall_respects_tight_token_budget() -> None:
+    user_id = "test-budget-user"
+    cleanup_user(user_id)
+    post_turn(user_id, "test-budget-1", "I just moved to Berlin from NYC last month.", "2025-03-15T10:00:00Z")
+
+    response = requests.post(
+        f"{BASE_URL}/recall",
+        json={"query": "Where does this user live?", "session_id": "test-budget-2", "user_id": user_id, "max_tokens": 4},
+        timeout=10,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {"context": "", "citations": []}
+
+
+def test_anonymous_sessions_do_not_share_memories() -> None:
+    post_turn(None, "test-anon-a", "I live in Berlin.", "2025-03-15T10:00:00Z")
+    post_turn(None, "test-anon-b", "I live in Seattle.", "2025-03-15T10:00:00Z")
+
+    a_recall = requests.post(
+        f"{BASE_URL}/recall",
+        json={"query": "Where does this user live?", "session_id": "test-anon-a", "user_id": None, "max_tokens": 512},
+        timeout=10,
+    ).json()
+    b_recall = requests.post(
+        f"{BASE_URL}/recall",
+        json={"query": "Where does this user live?", "session_id": "test-anon-b", "user_id": None, "max_tokens": 512},
+        timeout=10,
+    ).json()
+
+    assert "Berlin" in a_recall["context"]
+    assert "Seattle" not in a_recall["context"]
+    assert "Seattle" in b_recall["context"]
+    assert "Berlin" not in b_recall["context"]
+
+
+def test_correction_phrase_updates_current_location() -> None:
+    user_id = "test-correction-user"
+    cleanup_user(user_id)
+    post_turn(user_id, "test-correction-1", "I live in NYC.", "2025-03-15T10:00:00Z")
+    post_turn(user_id, "test-correction-2", "Actually, I live in Berlin now, not NYC.", "2025-03-16T10:00:00Z")
+
+    recall = recall_query("Where does this user live?", "test-correction-3", user_id).json()
+    assert "Berlin" in recall["context"]
+    assert "NYC" not in recall["context"]
+
+
 def test_recall_quality_fixture() -> None:
     report = run_fixture(BASE_URL, DEFAULT_FIXTURE)
     assert report["composite_score"] >= 0.75, report
@@ -115,7 +163,7 @@ def test_restart_persistence_when_enabled() -> None:
     assert "Lisbon" in recall["context"]
 
 
-def post_turn(user_id: str, session_id: str, text: str, timestamp: str) -> requests.Response:
+def post_turn(user_id: str | None, session_id: str, text: str, timestamp: str) -> requests.Response:
     return requests.post(
         f"{BASE_URL}/turns",
         json={

@@ -72,6 +72,17 @@ def test_tight_token_budget_returns_empty_instead_of_header_only() -> None:
     assert result == {"context": "", "citations": []}
 
 
+def test_noise_query_does_not_return_active_memories() -> None:
+    result = RecallEngine(FakeDatabase()).recall(
+        query="What is this user's favorite basketball team?",
+        session_id="unit-session",
+        user_id="unit-user",
+        max_tokens=512,
+    )
+
+    assert result == {"context": "", "citations": []}
+
+
 def test_approx_token_counter_is_conservative() -> None:
     assert approx_tokens("Berlin") >= 1
     assert approx_tokens("a" * 80) >= 20
