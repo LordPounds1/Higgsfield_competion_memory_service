@@ -19,3 +19,13 @@
 **Observation:** A small rules-based extractor is enough to cover the self-eval-style examples without depending on an external API key. It is also easier to debug than an LLM-only extractor.
 
 **Result:** Turns are still stored synchronously, and newly extracted memories are inserted before `POST /turns` returns. Fact supersession is not implemented yet, so mutable facts can still accumulate as active history until v3.
+
+## v3 - Supersession for mutable facts
+
+**What changed:** Added key-based supersession for mutable memories. New values for keys such as `location.current`, `employment.current`, and `opinion.<topic>` now mark older active memories inactive and store the old memory id in `supersedes`.
+
+**Why:** A memory service should know the current state of mutable facts. If the user first says they work at Stripe and later says they joined Notion, recall should not treat both jobs as equally current.
+
+**Observation:** The extractor already normalizes mutable topics into stable keys, so the update logic can stay simple: compare by key inside the same user scope, deactivate old active rows, and insert the new row.
+
+**Result:** Old facts are preserved for inspection through `/users/{user_id}/memories`, but only the latest mutable fact remains active. This sets up the next iteration, where recall ranking can safely prioritize active memories.

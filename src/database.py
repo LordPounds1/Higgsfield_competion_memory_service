@@ -41,6 +41,10 @@ def normalized_value(value: str) -> str:
     return " ".join(value.lower().split())
 
 
+def is_mutable_key(key: str) -> bool:
+    return key.endswith(".current") or key.startswith("opinion.")
+
+
 class MemoryDatabase:
     def __init__(self, database_path: Path) -> None:
         self.database_path = database_path
@@ -183,6 +187,16 @@ class MemoryDatabase:
                         continue
                     if self.active_duplicate_exists(memory.get("user_id"), memory["source_session"], key, value):
                         continue
+                    supersedes = None
+                    if is_mutable_key(key):
+                        stale_rows = self.active_rows_for_key(memory.get("user_id"), memory["source_session"], key)
+                        for stale in stale_rows:
+                            if supersedes is None:
+                                supersedes = stale["id"]
+                            self.conn.execute(
+                                "UPDATE memories SET active = 0, updated_at = ? WHERE id = ?",
+                                (utc_now(), stale["id"]),
+                            )
                     memory_id = str(uuid.uuid4())
                     now = utc_now()
                     self.conn.execute(
@@ -190,7 +204,7 @@ class MemoryDatabase:
                         INSERT INTO memories
                             (id, type, key, value, confidence, user_id, source_session, source_turn,
                              created_at, updated_at, supersedes, active)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
                         """,
                         (
                             memory_id,
@@ -203,6 +217,7 @@ class MemoryDatabase:
                             memory["source_turn"],
                             now,
                             now,
+                            supersedes,
                         ),
                     )
                     self.conn.execute(
@@ -225,6 +240,27 @@ class MemoryDatabase:
                 self.conn.rollback()
                 raise
         return inserted_ids
+
+    def active_rows_for_key(self, user_id: str | None, session_id: str, key: str) -> list[sqlite3.Row]:
+        if user_id:
+            rows = self.conn.execute(
+                """
+                SELECT * FROM memories
+                WHERE active = 1 AND user_id = ? AND key = ?
+                ORDER BY updated_at DESC
+                """,
+                (user_id, key),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                """
+                SELECT * FROM memories
+                WHERE active = 1 AND user_id IS NULL AND source_session = ? AND key = ?
+                ORDER BY updated_at DESC
+                """,
+                (session_id, key),
+            ).fetchall()
+        return list(rows)
 
     def active_duplicate_exists(self, user_id: str | None, session_id: str, key: str, value: str) -> bool:
         if user_id:
