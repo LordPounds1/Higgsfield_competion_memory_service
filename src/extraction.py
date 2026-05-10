@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
+import os
 import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
+
+import requests
 
 from src.models import TurnRequest
 
@@ -57,6 +61,17 @@ def extract_memories(request: TurnRequest, turn_id: str) -> list[dict[str, Any]]
             elif destination:
                 emit("fact", "location.current", f"Lives in {destination}", 0.86, sentence)
 
+        settled = re.search(
+            r"\b(?:i\s+)?moved out of (?P<from>.+?) and settled in (?P<to>.+)$",
+            sentence,
+            re.IGNORECASE,
+        )
+        if settled:
+            destination = clean_entity(settled.group("to"))
+            origin = clean_entity(settled.group("from"))
+            if destination and origin:
+                emit("fact", "location.current", f"Lives in {destination}; moved from {origin}", 0.88, sentence)
+
         location = re.search(
             r"\b(?:i\s+(?:now\s+)?live in|i'm\s+(?:now\s+)?living in|i am\s+(?:now\s+)?living in|i'm based in|i am based in|currently based in)\s+(?P<place>.+)$",
             sentence,
@@ -82,7 +97,12 @@ def extract_memories(request: TurnRequest, turn_id: str) -> list[dict[str, Any]]
             sentence,
             re.IGNORECASE,
         )
-        job_match = transition or joined or employment
+        took_role = re.search(
+            r"\b(?:i\s+)?(?:took|accepted)\s+(?:a|an)?\s*(?P<role>.+?)\s+role at\s+(?P<company>[A-Z][A-Za-z0-9&.-]{1,80})(?:\s+(?:last week|this week|recently|today|yesterday))?$",
+            sentence,
+            re.IGNORECASE,
+        )
+        job_match = transition or joined or employment or took_role
         if job_match:
             company = clean_entity(job_match.group("company"))
             role = clean_value(job_match.group("role") or "")
@@ -105,6 +125,15 @@ def extract_memories(request: TurnRequest, turn_id: str) -> list[dict[str, Any]]
             name = walking.group("name")
             emit("fact", f"pet.{slug(name)}", f"Has a pet named {name}", 0.72, sentence)
 
+        pet_care = re.search(
+            r"\b(?P<name>[A-Z][A-Za-z0-9_-]{1,40})\s+(?:needs|needed|wants|wanted)\s+(?:another\s+)?(?:walk|feeding|food|vet|grooming)\b",
+            sentence,
+            re.IGNORECASE,
+        )
+        if pet_care:
+            name = pet_care.group("name")
+            emit("fact", f"pet.{slug(name)}", f"Has a pet named {name}", 0.7, sentence)
+
         if "vegetarian" in lower:
             emit("preference", "diet.vegetarian", "Is vegetarian", 0.86, sentence)
         if "vegan" in lower:
@@ -120,6 +149,11 @@ def extract_memories(request: TurnRequest, turn_id: str) -> list[dict[str, Any]]
             item = clean_entity(allergy_noun.group("item"))
             if item:
                 emit("fact", f"allergy.{slug(item)}", f"Allergic to {item}", 0.82, sentence)
+        avoid_food = re.search(r"\b(?:i\s+)?avoid\s+(?P<item>[A-Za-z][A-Za-z -]{1,60})\b", sentence, re.IGNORECASE)
+        if avoid_food:
+            item = clean_entity(avoid_food.group("item"))
+            if item:
+                emit("preference", f"preference.food.{slug(item)}", f"Avoids {item}", 0.76, sentence)
 
         prefer = re.search(r"\b(?:i prefer|please keep|keep)\s+(?P<pref>[^.;]+)", sentence, re.IGNORECASE)
         if prefer:
@@ -135,7 +169,112 @@ def extract_memories(request: TurnRequest, turn_id: str) -> list[dict[str, Any]]
         if "typescript" in lower and any(marker in lower for marker in ["i love", "i hate", "fine for", "annoying"]):
             emit("opinion", "opinion.typescript", clean_value(sentence), 0.74, sentence)
 
-    return [asdict(memory) for memory in dedupe(memories)]
+    deterministic_memories = [asdict(memory) for memory in dedupe(memories)]
+    llm_memories = extract_memories_with_groq(request, turn_id, text)
+    return merge_memory_dicts([*deterministic_memories, *llm_memories])
+
+
+def extract_memories_with_groq(request: TurnRequest, turn_id: str, text: str) -> list[dict[str, Any]]:
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key or not text.strip():
+        return []
+
+    model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    payload = {
+        "model": model,
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Extract durable user memories from conversation text for an AI agent. "
+                    "Return JSON only with a top-level key 'memories'. "
+                    "Each memory must have type, key, value, confidence. "
+                    "Allowed types: fact, preference, opinion, event. "
+                    "Use canonical keys: location.current, employment.current, "
+                    "pet.<name>, allergy.<item>, diet.vegetarian, diet.vegan, "
+                    "preference.answer_style, preference.food.<item>, opinion.<topic>. "
+                    "Treat indirect pet care phrases as pet evidence: 'Biscuit needs a walk' "
+                    "means the user has a pet named Biscuit. "
+                    "Treat food avoidance as a preference unless the user says allergy: "
+                    "'I avoid shellfish' -> key preference.food.shellfish, value Avoids shellfish. "
+                    "For job transitions, current employer is the new employer, not the old one. "
+                    "For moves or settled-in phrasing, current location is the destination. "
+                    "Do not invent facts or extract assistant-only claims."
+                ),
+            },
+            {
+                "role": "user",
+                "content": text[:8000],
+            },
+        ],
+    }
+    try:
+        response = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=payload,
+            timeout=20,
+        )
+        response.raise_for_status()
+        content = response.json()["choices"][0]["message"]["content"]
+        raw = json.loads(content)
+    except Exception:
+        return []
+
+    memories = raw.get("memories", [])
+    if not isinstance(memories, list):
+        return []
+    extracted: list[dict[str, Any]] = []
+    for item in memories:
+        memory = normalize_llm_memory(item, request, turn_id)
+        if memory:
+            extracted.append(memory)
+    return extracted
+
+
+def normalize_llm_memory(item: Any, request: TurnRequest, turn_id: str) -> dict[str, Any] | None:
+    if not isinstance(item, dict):
+        return None
+    memory_type = str(item.get("type", "")).strip().lower()
+    key = str(item.get("key", "")).strip().lower()
+    value = clean_value(str(item.get("value", "")))
+    if memory_type not in {"fact", "preference", "opinion", "event"}:
+        return None
+    if not valid_memory_key(key) or not value:
+        return None
+    try:
+        confidence = float(item.get("confidence", 0.7))
+    except (TypeError, ValueError):
+        confidence = 0.7
+    confidence = max(0.0, min(confidence, 1.0))
+    return {
+        "type": memory_type,
+        "key": key,
+        "value": value,
+        "confidence": confidence,
+        "user_id": request.user_id,
+        "source_session": request.session_id,
+        "source_turn": turn_id,
+        "metadata": {"extractor": "groq-optional"},
+    }
+
+
+def valid_memory_key(key: str) -> bool:
+    if not key or len(key) > 120:
+        return False
+    return bool(re.fullmatch(r"[a-z0-9][a-z0-9_.-]*", key))
+
+
+def merge_memory_dicts(memories: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: dict[str, dict[str, Any]] = {}
+    for memory in memories:
+        identity = f"{memory['type']}:{memory['key']}:{slug(memory['value'])}"
+        current = seen.get(identity)
+        if current is None or float(memory.get("confidence", 0.0)) > float(current.get("confidence", 0.0)):
+            seen[identity] = memory
+    return list(seen.values())
 
 
 def dedupe(memories: list[ExtractedMemory]) -> list[ExtractedMemory]:
