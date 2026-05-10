@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
+import os
 import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
+
+import requests
 
 from src.models import TurnRequest
 
@@ -135,7 +139,105 @@ def extract_memories(request: TurnRequest, turn_id: str) -> list[dict[str, Any]]
         if "typescript" in lower and any(marker in lower for marker in ["i love", "i hate", "fine for", "annoying"]):
             emit("opinion", "opinion.typescript", clean_value(sentence), 0.74, sentence)
 
-    return [asdict(memory) for memory in dedupe(memories)]
+    deterministic_memories = [asdict(memory) for memory in dedupe(memories)]
+    llm_memories = extract_memories_with_groq(request, turn_id, text)
+    return merge_memory_dicts([*deterministic_memories, *llm_memories])
+
+
+def extract_memories_with_groq(request: TurnRequest, turn_id: str, text: str) -> list[dict[str, Any]]:
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key or not text.strip():
+        return []
+
+    model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    payload = {
+        "model": model,
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Extract durable user memories from conversation text. "
+                    "Return JSON only with a top-level key 'memories'. "
+                    "Each memory must have type, key, value, confidence. "
+                    "Allowed types: fact, preference, opinion, event. "
+                    "Use stable keys like location.current, employment.current, "
+                    "pet.<name>, allergy.<item>, diet.vegetarian, preference.answer_style, "
+                    "opinion.<topic>. Do not invent facts."
+                ),
+            },
+            {
+                "role": "user",
+                "content": text[:8000],
+            },
+        ],
+    }
+    try:
+        response = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=payload,
+            timeout=20,
+        )
+        response.raise_for_status()
+        content = response.json()["choices"][0]["message"]["content"]
+        raw = json.loads(content)
+    except Exception:
+        return []
+
+    memories = raw.get("memories", [])
+    if not isinstance(memories, list):
+        return []
+    extracted: list[dict[str, Any]] = []
+    for item in memories:
+        memory = normalize_llm_memory(item, request, turn_id)
+        if memory:
+            extracted.append(memory)
+    return extracted
+
+
+def normalize_llm_memory(item: Any, request: TurnRequest, turn_id: str) -> dict[str, Any] | None:
+    if not isinstance(item, dict):
+        return None
+    memory_type = str(item.get("type", "")).strip().lower()
+    key = str(item.get("key", "")).strip().lower()
+    value = clean_value(str(item.get("value", "")))
+    if memory_type not in {"fact", "preference", "opinion", "event"}:
+        return None
+    if not valid_memory_key(key) or not value:
+        return None
+    try:
+        confidence = float(item.get("confidence", 0.7))
+    except (TypeError, ValueError):
+        confidence = 0.7
+    confidence = max(0.0, min(confidence, 1.0))
+    return {
+        "type": memory_type,
+        "key": key,
+        "value": value,
+        "confidence": confidence,
+        "user_id": request.user_id,
+        "source_session": request.session_id,
+        "source_turn": turn_id,
+        "metadata": {"extractor": "groq-optional"},
+    }
+
+
+def valid_memory_key(key: str) -> bool:
+    if not key or len(key) > 120:
+        return False
+    return bool(re.fullmatch(r"[a-z0-9][a-z0-9_.-]*", key))
+
+
+def merge_memory_dicts(memories: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: dict[str, dict[str, Any]] = {}
+    for memory in memories:
+        identity = f"{memory['type']}:{memory['key']}:{slug(memory['value'])}"
+        current = seen.get(identity)
+        if current is None or float(memory.get("confidence", 0.0)) > float(current.get("confidence", 0.0)):
+            seen[identity] = memory
+    return list(seen.values())
 
 
 def dedupe(memories: list[ExtractedMemory]) -> list[ExtractedMemory]:

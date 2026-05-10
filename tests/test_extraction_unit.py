@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.extraction import extract_memories
+from src.extraction import extract_memories, normalize_llm_memory
 from src.models import TurnRequest
 
 
@@ -99,3 +99,27 @@ def test_extracts_pet_allergy_and_preference_paraphrases() -> None:
     assert values_by_key["pet.biscuit"] == "Has a dog named Biscuit"
     assert values_by_key["allergy.shellfish"] == "Allergic to shellfish"
     assert values_by_key["preference.answer_style"] == "Prefers concise answers"
+
+
+def test_optional_groq_extractor_is_noop_without_key(monkeypatch) -> None:
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    memories = extract_memories(make_turn("I just moved to Berlin from NYC last month."), "turn-11")
+
+    assert by_key(memories, "location.current")[0]["value"] == "Lives in Berlin; moved from NYC"
+
+
+def test_llm_memory_normalization_rejects_invalid_shapes() -> None:
+    request = make_turn("I took a role at Notion.")
+
+    assert normalize_llm_memory({"type": "fact", "key": "employment.current", "value": "Works at Notion", "confidence": 1.4}, request, "turn-12") == {
+        "type": "fact",
+        "key": "employment.current",
+        "value": "Works at Notion",
+        "confidence": 1.0,
+        "user_id": "unit-user",
+        "source_session": "unit-session",
+        "source_turn": "turn-12",
+        "metadata": {"extractor": "groq-optional"},
+    }
+    assert normalize_llm_memory({"type": "madeup", "key": "employment.current", "value": "Works at Notion"}, request, "turn-12") is None
+    assert normalize_llm_memory({"type": "fact", "key": "bad key!", "value": "Works at Notion"}, request, "turn-12") is None
