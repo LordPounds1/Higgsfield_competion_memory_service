@@ -61,6 +61,17 @@ def extract_memories(request: TurnRequest, turn_id: str) -> list[dict[str, Any]]
             elif destination:
                 emit("fact", "location.current", f"Lives in {destination}", 0.86, sentence)
 
+        settled = re.search(
+            r"\b(?:i\s+)?moved out of (?P<from>.+?) and settled in (?P<to>.+)$",
+            sentence,
+            re.IGNORECASE,
+        )
+        if settled:
+            destination = clean_entity(settled.group("to"))
+            origin = clean_entity(settled.group("from"))
+            if destination and origin:
+                emit("fact", "location.current", f"Lives in {destination}; moved from {origin}", 0.88, sentence)
+
         location = re.search(
             r"\b(?:i\s+(?:now\s+)?live in|i'm\s+(?:now\s+)?living in|i am\s+(?:now\s+)?living in|i'm based in|i am based in|currently based in)\s+(?P<place>.+)$",
             sentence,
@@ -86,7 +97,12 @@ def extract_memories(request: TurnRequest, turn_id: str) -> list[dict[str, Any]]
             sentence,
             re.IGNORECASE,
         )
-        job_match = transition or joined or employment
+        took_role = re.search(
+            r"\b(?:i\s+)?(?:took|accepted)\s+(?:a|an)?\s*(?P<role>.+?)\s+role at\s+(?P<company>[A-Z][A-Za-z0-9&.-]{1,80})(?:\s+(?:last week|this week|recently|today|yesterday))?$",
+            sentence,
+            re.IGNORECASE,
+        )
+        job_match = transition or joined or employment or took_role
         if job_match:
             company = clean_entity(job_match.group("company"))
             role = clean_value(job_match.group("role") or "")
@@ -109,6 +125,15 @@ def extract_memories(request: TurnRequest, turn_id: str) -> list[dict[str, Any]]
             name = walking.group("name")
             emit("fact", f"pet.{slug(name)}", f"Has a pet named {name}", 0.72, sentence)
 
+        pet_care = re.search(
+            r"\b(?P<name>[A-Z][A-Za-z0-9_-]{1,40})\s+(?:needs|needed|wants|wanted)\s+(?:another\s+)?(?:walk|feeding|food|vet|grooming)\b",
+            sentence,
+            re.IGNORECASE,
+        )
+        if pet_care:
+            name = pet_care.group("name")
+            emit("fact", f"pet.{slug(name)}", f"Has a pet named {name}", 0.7, sentence)
+
         if "vegetarian" in lower:
             emit("preference", "diet.vegetarian", "Is vegetarian", 0.86, sentence)
         if "vegan" in lower:
@@ -124,6 +149,11 @@ def extract_memories(request: TurnRequest, turn_id: str) -> list[dict[str, Any]]
             item = clean_entity(allergy_noun.group("item"))
             if item:
                 emit("fact", f"allergy.{slug(item)}", f"Allergic to {item}", 0.82, sentence)
+        avoid_food = re.search(r"\b(?:i\s+)?avoid\s+(?P<item>[A-Za-z][A-Za-z -]{1,60})\b", sentence, re.IGNORECASE)
+        if avoid_food:
+            item = clean_entity(avoid_food.group("item"))
+            if item:
+                emit("preference", f"preference.food.{slug(item)}", f"Avoids {item}", 0.76, sentence)
 
         prefer = re.search(r"\b(?:i prefer|please keep|keep)\s+(?P<pref>[^.;]+)", sentence, re.IGNORECASE)
         if prefer:
@@ -158,13 +188,20 @@ def extract_memories_with_groq(request: TurnRequest, turn_id: str, text: str) ->
             {
                 "role": "system",
                 "content": (
-                    "Extract durable user memories from conversation text. "
+                    "Extract durable user memories from conversation text for an AI agent. "
                     "Return JSON only with a top-level key 'memories'. "
                     "Each memory must have type, key, value, confidence. "
                     "Allowed types: fact, preference, opinion, event. "
-                    "Use stable keys like location.current, employment.current, "
-                    "pet.<name>, allergy.<item>, diet.vegetarian, preference.answer_style, "
-                    "opinion.<topic>. Do not invent facts."
+                    "Use canonical keys: location.current, employment.current, "
+                    "pet.<name>, allergy.<item>, diet.vegetarian, diet.vegan, "
+                    "preference.answer_style, preference.food.<item>, opinion.<topic>. "
+                    "Treat indirect pet care phrases as pet evidence: 'Biscuit needs a walk' "
+                    "means the user has a pet named Biscuit. "
+                    "Treat food avoidance as a preference unless the user says allergy: "
+                    "'I avoid shellfish' -> key preference.food.shellfish, value Avoids shellfish. "
+                    "For job transitions, current employer is the new employer, not the old one. "
+                    "For moves or settled-in phrasing, current location is the destination. "
+                    "Do not invent facts or extract assistant-only claims."
                 ),
             },
             {

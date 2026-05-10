@@ -101,9 +101,27 @@ def test_extracts_pet_allergy_and_preference_paraphrases() -> None:
     assert values_by_key["preference.answer_style"] == "Prefers concise answers"
 
 
+def test_extracts_hard_paraphrase_fallbacks() -> None:
+    memories = extract_memories(
+        make_turn(
+            "I'm no longer with Stripe. I took a product role at Notion last week. "
+            "I moved out of NYC and settled in Berlin. "
+            "Biscuit needs another walk before my meetings. "
+            "I avoid shellfish."
+        ),
+        "turn-11",
+    )
+    values_by_key = {memory["key"]: memory["value"] for memory in memories}
+
+    assert values_by_key["employment.current"] == "Works at Notion as product"
+    assert values_by_key["location.current"] == "Lives in Berlin; moved from NYC"
+    assert values_by_key["pet.biscuit"] == "Has a pet named Biscuit"
+    assert values_by_key["preference.food.shellfish"] == "Avoids shellfish"
+
+
 def test_optional_groq_extractor_is_noop_without_key(monkeypatch) -> None:
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
-    memories = extract_memories(make_turn("I just moved to Berlin from NYC last month."), "turn-11")
+    memories = extract_memories(make_turn("I just moved to Berlin from NYC last month."), "turn-12")
 
     assert by_key(memories, "location.current")[0]["value"] == "Lives in Berlin; moved from NYC"
 
@@ -111,15 +129,15 @@ def test_optional_groq_extractor_is_noop_without_key(monkeypatch) -> None:
 def test_llm_memory_normalization_rejects_invalid_shapes() -> None:
     request = make_turn("I took a role at Notion.")
 
-    assert normalize_llm_memory({"type": "fact", "key": "employment.current", "value": "Works at Notion", "confidence": 1.4}, request, "turn-12") == {
+    assert normalize_llm_memory({"type": "fact", "key": "employment.current", "value": "Works at Notion", "confidence": 1.4}, request, "turn-13") == {
         "type": "fact",
         "key": "employment.current",
         "value": "Works at Notion",
         "confidence": 1.0,
         "user_id": "unit-user",
         "source_session": "unit-session",
-        "source_turn": "turn-12",
+        "source_turn": "turn-13",
         "metadata": {"extractor": "groq-optional"},
     }
-    assert normalize_llm_memory({"type": "madeup", "key": "employment.current", "value": "Works at Notion"}, request, "turn-12") is None
-    assert normalize_llm_memory({"type": "fact", "key": "bad key!", "value": "Works at Notion"}, request, "turn-12") is None
+    assert normalize_llm_memory({"type": "madeup", "key": "employment.current", "value": "Works at Notion"}, request, "turn-13") is None
+    assert normalize_llm_memory({"type": "fact", "key": "bad key!", "value": "Works at Notion"}, request, "turn-13") is None
